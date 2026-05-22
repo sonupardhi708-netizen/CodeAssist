@@ -1,41 +1,55 @@
-name: Android CI
+name: Nexus Production Compiler Engine
 
 on:
-  pull_request:
-  workflow_dispatch:
+  repository_dispatch:
+
+permissions:
+  contents: write
+  actions: write
 
 jobs:
   build:
-    name: Build debug apk
     runs-on: ubuntu-latest
     steps:
-      - name: Cancel previous runs
-        uses: styfle/cancel-workflow-action@0.5.0
-        with:
-          access_token: ${{ github.token }}
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-      - uses: actions/checkout@v2
-    
-      - name: set up JDK 11
-        uses: actions/setup-java@v2
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          java-version: '11'
-          distribution: 'adopt'
-          cache: gradle
+          channel: 'stable'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Create Stable Project
+        run: |
+          rm -rf nexus_app
+          flutter create nexus_app --project-name=nexus_mod_app
+          cd nexus_app
+          cat << 'EOF' > lib/main.dart
+          ${{ github.event.client_payload.code }}
+          EOF
 
-      - name: Build debug apk
-        uses: eskatos/gradle-command-action@v1
+      - name: Build Production APK
+        run: |
+          cd nexus_app
+          flutter pub get
+          flutter build apk --release --no-tree-shake-icons
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean Old Releases
+        run: |
+          gh release delete latest --yes || true
+          git push --delete origin latest || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Direct App Release
+        uses: softprops/action-gh-release@v2
         with:
-          arguments: assembleDebug
-          distributions-cache-enabled: true
-          dependencies-cache-enabled: true
-          configuration-cache-enabled: true
-
-      - name: Upload debug apk
-        uses: actions/upload-artifact@v2
-        with:
-          name: apk-debug
-          path: app/build/outputs/apk/debug
+          tag_name: latest
+          files: nexus_app/build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
